@@ -1,0 +1,178 @@
+
+
+---
+output:
+  html_document: default
+  pdf_document:
+    fig_caption: yes
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,fig.width=5, fig.height=5,fig.align = "center",cache=TRUE)
+```
+
+
+
+```{r, echo=FALSE,  warning=FALSE, message=FALSE}
+##libraries, globals
+
+library(ggplot2)
+library(reshape)
+library(grid)
+library(dplyr)
+library(gridExtra)
+library(lme4)
+
+tobin <- function(x) {
+  cumsum <- 0
+  for (i in 1:nchar(x)) {
+    if (substr(x,i,i) == "b") {
+      cumsum <- cumsum + 2**(i-8)
+    }
+    
+  }
+  return(cumsum)
+}
+
+#data <- read.csv("out_prior.csv")
+data <- read.csv("comb_prior.csv", strip.white=TRUE)
+
+setwd("/home/sam/Documents/transfer_learning/v1/transfer/data")
+data.hum.transfer.annoying <- read.csv("out_trans_only.csv", strip.white=TRUE)
+data.hum.transfer.annoying <- data.hum.transfer.annoying %>%
+                                      mutate(timestep=timestep - mean(timestep))
+
+setwd("/home/sam/Documents/transfer_learning/v1/similarity/data")
+data.hum.similarity <- read.csv("out_sim_only.csv", strip.white=TRUE)
+
+
+
+data <- data %>%
+        group_by(name, type) %>%
+        mutate(type_name=paste(type, name, sep="_")) 
+  
+  
+n_r_tot <- length(unique(data$type_name))
+
+data <- data %>%
+        group_by(from, to) %>%
+        mutate(cond=paste(from, to, sep="_")) %>%
+        group_by(from, to, h, type) %>%
+        mutate(n_r = length(type_name)) %>%
+        mutate(term_prior=-count * log(n_r))  %>%
+        group_by(from,to,h) %>%
+        mutate(hyp_prior=sum(term_prior) + runif(1)) %>%
+        mutate(reuses=grepl("from", h)) %>% 
+        group_by(from, to, reuses) %>%
+        top_n(n=n_r_tot * 10,wt=hyp_prior) %>%
+        group_by(from, to) %>%
+        top_n(n=n_r_tot*15, wt=hyp_prior) %>%
+        mutate(MDL=max(hyp_prior)) %>%  
+        ungroup %>%
+        mutate(MDL = MDL - mean(MDL))
+
+
+data.copy <- cbind(data)
+
+binomial_smooth <- function(...) {
+  geom_smooth(method = "glm", method.args = list(family = "binomial"), ...)
+}
+
+
+
+```
+
+```{r}
+  
+  
+
+
+data.reuse <- data.copy %>%
+                  group_by(h) %>%
+                  filter(reuses) %>%
+                  group_by(cond) %>%
+                  mutate(MDL=max(hyp_prior))
+
+data.no_reuse <- data.copy %>%
+                  group_by(h) %>%
+                  filter(!reuses) %>%
+                  mutate(MDL=max(hyp_prior))
+
+y <- unique(as.character(data.reuse$cond))
+length(unique(y))
+y <- unique(as.character(data.no_reuse$cond))
+length(unique(y))
+
+```     
+
+
+
+```{r}
+
+
+data.hum.transfer.1  <- subset(data.hum.transfer.annoying, data.hum.transfer.annoying$which == 0)
+data.hum.transfer.2  <- subset(data.hum.transfer.annoying, data.hum.transfer.annoying$which == 1)
+
+names(data.hum.transfer.1)[names(data.hum.transfer.1) == 'condition'] <- 'from'
+names(data.hum.transfer.2)[names(data.hum.transfer.2) == 'condition'] <- 'to'
+names(data.hum.transfer.1)[names(data.hum.transfer.1) == 'correct'] <- 'correct1'
+names(data.hum.transfer.2)[names(data.hum.transfer.2) == 'correct'] <- 'correct2'
+
+
+data.hum.transfer.1 <- data.hum.transfer.1[ , -which(names(data.hum.transfer.1) %in% c("which","timestep", "consistent", "subject"))]
+data.hum.transfer.2 <- data.hum.transfer.2[ , -which(names(data.hum.transfer.2) %in% c("which", "consistent"))]
+data.hum.transfer <- cbind(data.hum.transfer.1, data.hum.transfer.2)
+
+
+
+f_get_prior <- function(f, t) {
+  from.use <- f[1]
+  to.use <- t[1]
+  d <- cbind(data.reuse) %>%
+       group_by(cond) %>%
+       filter(grepl(from.use, cond) & grepl(to.use, cond))
+
+  return(d$MDL[1])
+  
+  
+}
+f_get_prior("ababbababbababb", "babaababaababaa")
+
+data.hum.transfer <- data.hum.transfer %>%
+      
+            group_by(from, to) %>%
+            mutate(cond=paste(from,to,sep="_")) %>%
+            mutate(MDL = f_get_prior(as.character(from), as.character(to))) %>%
+            group_by(subject) %>%
+            mutate(corr_1_av = sum(correct1))
+
+data.hum.similarity <- data.hum.similarity %>%
+          group_by(training, transfer) %>%
+          mutate(MDL = f_get_prior(as.character(training), as.character(transfer))) 
+
+```
+
+
+```{r}
+
+summary(lm(data=data.hum.similarity, similarity ~ MDL))
+
+summary(glm(data=data.hum.transfer,  correct2 ~ MDL + timestep , family=binomial(link="logit")))
+
+summary(glmer(data=data.hum.transfer,  correct2 ~ MDL + timestep +(1|subject), family=binomial(link="logit")))
+
+
+
+ggplot(data=data.hum.transfer, aes(x=MDL, y=correct2)) +
+      #stat_summary(fun.data="mean_cl_boot", aes(y=correct2, color=MDL))
+    binomial_smooth() +
+    stat_summary_bin(bins=4, fun.data="mean_cl_boot")
+
+ggplot(data=data.hum.similarity, aes(x=MDL, y=similarity)) +
+      stat_summary_bin(bins=10, fun.data="mean_cl_boot") +
+      #geom_point()
+      stat_smooth(method="lm")
+
+
+```
