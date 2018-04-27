@@ -7,7 +7,7 @@ from model import *
 import copy
 import numpy
 import itertools as it
-
+import time
 
 def get_rule_counts(grammar, t, add_counts ={}):
     """
@@ -38,47 +38,140 @@ def get_rule_counts(grammar, t, add_counts ={}):
         out.append(v)
     return out
 
+def run(pairs):
 
-def run_nothing(pairs):
     priors = {}
     complete = 0
+    top_hyps = set()
+    already_done = set()
+    t_start = time.time()
+
     for pair in pairs:
         p1 = pair[0]
         p2 = pair[1]
-        data = [FunctionData(alpha=alpha,
-                 input=[p1], output={p2: len(p2)})]
+
         h0 = MyHypothesis()
-        top_hyps = set()
+        t_pair = time.time()
+        #h0.start_counts = add_counts
+
         seen = set()
-        for ind in xrange(0, len(p2), 3):
-            for h in MHSampler(h0, data, steps=steps, 
-                acceptance_temperature=acc_temp):
+        #for ind in xrange(2, 3):
+        for ind in xrange(len(p1)+1):
 
-                print h, h(p1)
+            seen_round = set()
+            x = 0
+            p1_i = p1[:ind]
+            p2_i = p2[:ind]
+            if (p1, p2_i) not in already_done:
+                already_done.add((p1, p2_i))
+                data = [FunctionData(alpha=alpha,
+                     input=[p1], output={p2_i: len(p2_i)})]
+
+                while len(seen_round) < n_top:
+                    for h in MHSampler(h0, data, steps=steps, 
+                        acceptance_temperature=acc_temp, prior_temperature=prior_temp):
+                        if len(seen_round) >= n_top:
+                            break
+                        str_h = str(h.value)
+                        out = h(p1)[:len(p2_i)]
+                        if (len(out) == len(p2_i) and
+                                 (hamming_distance(out, p2_i) == 0) and
+                                (len(h(p1)[:len(p1)]) == len(p1))) :
+                            if str_h not in seen: #and "from" not in str_h[14:]:
+                                l_rules = [str(i) for i in list(numpy.hstack(get_rule_counts(grammar, h.value)))]
+                                top_hyps.add((toAB(p1), ind,copy.deepcopy(h), toAB(p2), toAB(h(p1_i)[:len(p1)]),
+                                       ",".join(l_rules), str(h.value)))
+                                seen.add(str_h)
+                            if str_h not in seen_round:
+                                seen_round.add(str_h)
+
+                        if x % 1000 == 0:
+                            print_star("seen:%d" % len(seen_round),
+                                         "steps:%d" % x, "hyp:%s"%str_h,
+                                         "p2:%s" % p2_i, 
+                                     "out:%s"%out, 
+                                    "prior:%f" % h.prior, 
+                                "pair_time:%.2f" % (time.time() - t_pair),
+                                 "tot_time:%.2f" % (time.time()-t_start))
+
+                        x += 1
+
+        for h in top_hyps:
+            print_star(h[0],h[1], h[2],h[3],h[4],h[5])
+
+    return top_hyps
 
 
 
+def output(hyps, rule_keys, out_f, poss_pairs, use_poss=False):
+    type_name = ""
+    for rule in rule_keys:
+        #types += "%s," % rule[0] 
+        type_name += "%s_%s," % (rule[0], rule[1])
+    #types = types[:len(types)-1]
+    type_name = type_name[:len(type_name)-1]
+    out_s = "p1,p2,out,upto,%s,hyp\n" % type_name
 
- 
+    for tup in hyps:
+        p1 = tup[0]
+        p2 = tup[3]
+        for p in poss_pairs:
+            poss_p1 = toAB(p[0])
+            poss_p2 = toAB(p[1])
+            if ((poss_p2 == p2) and 
+                ((p1 == poss_p1) or use_poss)):
+                out = tup[4]
+                upto = tup[1]
 
+                rules = tup[5]
+                hyp = tup[6].replace(" ","").replace(","," ")
+
+                out_s += "%s,%s,%s,%d,%s,%s\n" % (poss_p1,poss_p2,out,upto,rules,hyp)
+
+
+    f = open(out_f, "w+")
+    f.write(out_s)
+    f.close()
+
+
+                
+def run_nothing(pairs):
+    complete = 0
+    #add_counts = {('SEQ', 'from_seq'):-1 + 1e-10, ('SEQ', '1'):1, ('SEQ', '0'):1}
+    add_counts = {}
+    p1 = "011101010010011"
+
+    p2s = list(set(list(set([(p1, p[1]) for p in pairs])) + 
+                list(set([(p1, p[0]) for p in pairs]))))
+
+    #p2s = p2s[3:4]
+    best_h = run(p2s)
+    return best_h
+
+def run_reuse(pairs):
+    best_h = run(pairs)
+    return best_h
 
 
 if __name__ == "__main__":
-
-    alpha = 0.0005
-    steps = 10000
-    n_top = 25
+    alpha = 1e-4
+    steps = 15000
+    n_top = 10
     acc_temp = 5.
-    max_chains = 10
+    prior_temp = 1.0
 
-    pairs = [x for x in it.product(vanilla_conditions(True, False),
+    max_chains = 1
+
+    pairs_1 = [x for x in it.product(vanilla_conditions(True, False),
              vanilla_conditions(False, True))]
-    pairs += [x for x in it.product(vanilla_conditions(False, True), 
+    pairs_2 = [x for x in it.product(vanilla_conditions(False, True), 
                     vanilla_conditions(True, False))]
 
+    pairs = copy.copy(pairs_1)
+    pairs += copy.copy(pairs_2)
 
-    print pairs
-    print len(pairs)
+    poss_pairs = copy.copy(pairs)
+
     rule_keys = []
 
     for z in grammar: 
@@ -96,6 +189,9 @@ if __name__ == "__main__":
         rule_keys.append(rs)
 
 
-    print rule_keys
+    #hyps = run_nothing(pairs)
+    #output(hyps, rule_keys, "nothing.csv", poss_pairs, use_poss=True)
 
-    run_nothing(pairs)
+    
+    hyps=run_reuse(pairs)
+    output(hyps, rule_keys, "reuse.csv", poss_pairs, use_poss=False)

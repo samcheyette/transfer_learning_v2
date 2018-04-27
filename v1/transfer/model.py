@@ -128,12 +128,12 @@ for i in xrange(0,10):
 grammar.add_rule('INT', str(MAX), None, 1.0)
 
 
-grammar.add_rule('SEQ', "'1'", None, 4.5)
-grammar.add_rule('SEQ', "'0'", None, 4.5)
-grammar.add_rule('SEQ', 'from_seq', None, 0.05) 
+grammar.add_rule('SEQ', "'1'", None, 3.0)
+grammar.add_rule('SEQ', "'0'", None, 3.0)
+grammar.add_rule('SEQ', 'from_seq', None, 3.0) 
 grammar.add_rule('SEQ', 'invert', ['SEQ'], 1.0) 
 grammar.add_rule('SEQ', "repeat(%s)", ["SEQ"], 1.0)
-grammar.add_rule('SEQ', "append(%s, %s)", ["SEQ", "SEQ"], 3.0)
+grammar.add_rule('SEQ', "append(%s, %s)", ["SEQ", "SEQ"], 1.0)
 grammar.add_rule('SEQ', "delete(%s, %s)", ["SEQ", "INT"], 1.0)
 grammar.add_rule('SEQ', "cut(%s, %s, %s)", ["SEQ", "INT", "INT"], 1.0)
 
